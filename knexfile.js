@@ -9,11 +9,11 @@ export default {
     client: 'mysql',
     connection: {
       secureAuth: false,
-      host : 'mysql.railway.internal',
-      port : '3306',
-      user : 'root',
-      password : 'MHlGemkdsDLHYjhMJJrgXndJLIRicaoV',
-      database : 'fortuneteller'
+      host : process.env.mysql_host,
+      port : process.env.mysql_port,
+      user : process.env.mysql_user,
+      password : process.env.mysql_password,
+      database : process.env.mysql_database
     },
     migrations: {
       tableName: 'migrations',
