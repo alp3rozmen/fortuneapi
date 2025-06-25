@@ -1,20 +1,10 @@
-// Update with your config settings.
+import dotenv from 'dotenv';
+dotenv.config();
 
-/**
- * @type { Object.<string, import("knex").Knex.Config> }
- */
 export default {
-  
-  development: {
+  production: {
     client: 'mysql',
-    connection: {
-      secureAuth: false,
-      host : process.env.mysql_host,
-      port : process.env.mysql_port,
-      user : process.env.mysql_user,
-      password : process.env.mysql_password,
-      database : process.env.mysql_database
-    },
+    connection: process.env.DATABASE_URL,
     migrations: {
       tableName: 'migrations',
       directory: './migrations'
@@ -23,6 +13,6 @@ export default {
       directory: './seeds'
     }
   }
-
 };
-
+// This configuration is for a production environment using MySQL.
+// It uses environment variables to set the database connection URL.
