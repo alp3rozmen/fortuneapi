@@ -11,8 +11,9 @@ import dayjs from 'dayjs';
 import { json } from "stream/consumers";
 import { start } from "repl";
 
-function methods(app) {
-    
+
+async function methods (app) {
+
     async function insertFals(user_id) {
         try {
             const [fal_id] = await connection('fals').insert({
@@ -251,8 +252,6 @@ function methods(app) {
        
     })
 
-
-
     app.post('/api/createfal', authenticateToken, async (req, res) => {
 
         var userid = req.body.userid;
@@ -272,14 +271,13 @@ function methods(app) {
             (req.body.comment !== undefined || req.body.comment !== null || req.body.comment !== '')) {
 
             fal_id = await insertFals(userid);
-
+            
             if (fal_id > 0) {
 
                 var image1 = Buffer.from(req.body.image1, 'base64');
                 var image2 = Buffer.from(req.body.image2, 'base64');
                 var image3 = Buffer.from(req.body.image3, 'base64');
-
-
+                
                 fs.mkdirSync('./images/' + req.body.userid, { recursive: true });
                 fs.mkdirSync('./images/' + req.body.userid + '/' + fal_id, { recursive: true });
 
@@ -306,9 +304,10 @@ function methods(app) {
                 }).then((result) => {
 
                     if (result) {
-                        return res.status(200).json({ message: 'Fal kaydedildi!' });
 
                         
+
+                        return res.status(200).json({ message: 'Fal kaydedildi!' });
                     }
                     else {
                         return res.status(400).json({ message: 'Bir hata meydana geldi!' });
