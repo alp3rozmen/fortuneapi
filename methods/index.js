@@ -2,16 +2,10 @@ import authenticateToken from "./middleware/index.js";
 import connection from "../knex/connection.js";
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import fs, { stat } from 'fs';
-import path, { join } from "path";
 import userDetails from "./userdetails/index.js";
 import FalEndPoints from "./fals/index.js";
-import { clear, Console, error } from "console";
 import dayjs from 'dayjs';
-import { json } from "stream/consumers";
-import { start } from "repl";
 import sendMail from "../helpers/mailer.js";
-
 
 async function methods(app) {
 
@@ -54,7 +48,7 @@ async function methods(app) {
                         return res.status(400).json({ error: 'Kullanıcı adı veya sifre hatalı', status: 'error' });
                     }
                 }
-                const token = jwt.sign({ username: username , user_role : user[0].user_role }, 'secret', { expiresIn: '24h' });
+                const token = jwt.sign({ username: username, user_role: user[0].user_role }, 'secret', { expiresIn: '24h' });
 
                 var response = {
                     status: 'success',
@@ -121,6 +115,43 @@ async function methods(app) {
                 return res.status(400).json({ error: 'Bir hata meydana geldi!' });
             }
         })
+    });
+
+    app.post('/api/UpdateSystemSettings', authenticateToken, async (req, res) => {
+        try {
+            const { ibanAddress, bankName, receiverName, receiverSurName } = req.body;
+
+            const systemsettings = await connection('systemsettings')
+                .orderBy('created_at', 'desc')
+                .first();
+
+
+            if (!systemsettings) {
+                await connection('systemsettings').insert({
+                    ibanAdress: ibanAddress,
+                    bankname: bankName,
+                    receivername: receiverName,
+                    receiversurname: receiverSurName
+                });
+
+                return res.status(200).json({ statusCode: 200, message: 'Sistem ayarları eklendi!' });
+            } else {
+                await connection('systemsettings')
+                    .where('id', systemsettings.id)  // Artık doğru ✅
+                    .update({
+                        ibanAdress: ibanAddress,
+                        bankname: bankName,
+                        receivername: receiverName,
+                        receiversurname: receiverSurName
+                    });
+
+                return res.status(200).json({ statusCode: 200, message: 'Sistem ayarları güncellendi!' });
+            }
+
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Bir hata meydana geldi!' });
+        }
     });
 
 
@@ -259,12 +290,12 @@ async function methods(app) {
                 .update({
                     status: status
                 });
-            
+
             if (status == 1) {
                 // ödeme tamamlandıysa kullanıcının bakiyesini güncelle
                 const paymentInfo = await connection('payments')
                     .where('id', paymentId);
-                
+
                 const userBalance = await connection('users')
                     .where('id', paymentInfo[0].user_id);
 
@@ -278,10 +309,10 @@ async function methods(app) {
 
 
                 sendMail(userBalance[0].email, 'Ödeme Onayı', `Merhaba ${userBalance[0].username},<br><br>'Ödemeniz başarıyla onaylandı. Yeni bakiyeniz: ${newBalance} TL.<br><br>Teşekkürler!`);
-                
+
             }
 
-            return res.status(200).json({ statusCode : 200 ,message: 'Ödeme durumu güncellendi!' });
+            return res.status(200).json({ statusCode: 200, message: 'Ödeme durumu güncellendi!' });
 
         } catch (err) {
             console.error(err);
