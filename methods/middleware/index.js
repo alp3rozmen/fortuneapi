@@ -18,7 +18,8 @@ function authenticateToken(req, res, next) {
           req.originalUrl === '/api/DeleteFalType' ||
           req.originalUrl === '/api/UpdateFalType' ||
           req.originalUrl === '/api/updateUserFalType' ||
-          req.originalUrl === '/api/updateUserStatus') {
+          req.originalUrl === '/api/updateUserStatus' ||
+          req.originalUrl === '/api/UpdateSystemSettings') {
         if (user.user_role != 3) {
           return res.status(400).json({ error: 'Yetkisiz Erişim!' });
         }
