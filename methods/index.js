@@ -10,6 +10,7 @@ import { clear, Console, error } from "console";
 import dayjs from 'dayjs';
 import { json } from "stream/consumers";
 import { start } from "repl";
+import sendMail from "../helpers/mailer.js";
 
 
 async function methods(app) {
@@ -150,6 +151,8 @@ async function methods(app) {
                 status: '0'
             });
 
+            sendMail('alp3rozmen@gmail.com', 'Yeni Ödeme Talebi', `Kullanıcı ID: ${userid} yeni bir ödeme talebi oluşturdu. Tutar: ${amount} TL, Tür: ${type}. Lütfen kontrol ediniz.`);
+
             return res.status(200).json({
                 message: 'Ödeme talebi başarıyla oluşturuldu!'
             });
@@ -272,6 +275,9 @@ async function methods(app) {
                     .update({
                         balance: newBalance
                     });
+
+
+                sendMail(userBalance[0].email, 'Ödeme Onayı', `Merhaba ${userBalance[0].username},<br><br>'Ödemeniz başarıyla onaylandı. Yeni bakiyeniz: ${newBalance} TL.<br><br>Teşekkürler!`);
                 
             }
 
