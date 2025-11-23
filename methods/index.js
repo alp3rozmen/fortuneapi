@@ -2,7 +2,7 @@ import authenticateToken from "./middleware/index.js";
 import connection from "../knex/connection.js";
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import fs from 'fs';
+import fs, { stat } from 'fs';
 import path, { join } from "path";
 import userDetails from "./userdetails/index.js";
 import FalEndPoints from "./fals/index.js";
@@ -12,7 +12,7 @@ import { json } from "stream/consumers";
 import { start } from "repl";
 
 
-async function methods (app) {
+async function methods(app) {
 
     async function insertFals(user_id) {
         try {
@@ -53,11 +53,8 @@ async function methods (app) {
                         return res.status(400).json({ error: 'Kullanıcı adı veya sifre hatalı', status: 'error' });
                     }
                 }
+                const token = jwt.sign({ username: username , user_role : user[0].user_role }, 'secret', { expiresIn: '24h' });
 
-                const token = jwt.sign({ username: username }, 'secret', { expiresIn: '24h' });
-                
-            
-                
                 var response = {
                     status: 'success',
                     message: 'Giris basarili',
@@ -66,8 +63,8 @@ async function methods (app) {
                     userName: user[0].username,
                     user_role: user[0].user_role,
                     profile_image: user[0].profile_image,
-                    email : user[0].email,
-                    balance : user[0].balance
+                    email: user[0].email,
+                    balance: user[0].balance
                 }
 
                 return res.status(200).json(response);
@@ -96,7 +93,7 @@ async function methods (app) {
                     email: user[0].email,
                     balance: user[0].balance
                 };
-        
+
                 return res.status(200).json(response);
             } else {
                 return res.status(404).json({
@@ -114,16 +111,188 @@ async function methods (app) {
     })
 
 
+    app.post('/api/getPaymentInfo', authenticateToken, (req, res) => {
+        connection.select().from('systemsettings').then((settings) => {
+            if (settings.length > 0) {
+                return res.status(200).json({ data: settings[0], statusCode: 200 });
+            }
+            else {
+                return res.status(400).json({ error: 'Bir hata meydana geldi!' });
+            }
+        })
+    });
+
+
+    app.post('/api/addPaymentRequest', authenticateToken, async (req, res) => {
+        try {
+            const { userid, amount, type } = req.body;
+
+            if (!userid || !amount || !type) {
+                return res.status(400).json({ error: 'Lütfen zorunlu alanları doldurun!' });
+            }
+
+            // zaten beklemede ödeme isteği var mı kontrol et
+            const payments = await connection('payments')
+                .where('user_id', userid)
+                .andWhere('status', '0');
+
+            if (payments.length > 0) {
+                return res.status(400).json({
+                    error: 'Zaten beklemede bir ödeme talebiniz var!'
+                });
+            }
+
+            // yoksa ekle
+            await connection('payments').insert({
+                user_id: userid,
+                amount: amount,
+                type: type,
+                status: '0'
+            });
+
+            return res.status(200).json({
+                message: 'Ödeme talebi başarıyla oluşturuldu!'
+            });
+
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Bir hata meydana geldi!' });
+        }
+    });
+
+    app.post('/api/getUserPayments', authenticateToken, async (req, res) => {
+        try {
+            const { userid } = req.body;
+
+            if (!userid) {
+                return res.status(400).json({ error: 'Lütfen zorunlu alanları doldurun!' });
+            }
+
+            const payments = await connection('payments')
+                .where('user_id', userid)
+                .orderBy('created_at', 'desc');
+
+            payments.map((payment) => {
+                if (payment.status === '0') {
+                    payment.statusText = 'Beklemede';
+                } else if (payment.status === '1') {
+                    payment.statusText = 'Tamamlandı';
+                }
+                else if (payment.status === '2') {
+                    payment.statusText = 'İptal Edildi';
+                }
+            }
+            );
+
+            return res.status(200).json({ statusCode: 200, data: payments });
+
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Bir hata meydana geldi!' });
+        }
+    });
+
+    app.post('/api/getAllUserPayments', authenticateToken, async (req, res) => {
+        try {
+            const { userid, status } = req.body;
+
+            const userInfo = await connection('users')
+                .where('id', userid)
+                .orderBy('created_at', 'desc');
+
+            if (!userid) {
+                return res.status(400).json({ error: 'Lütfen zorunlu alanları doldurun!' });
+            }
+
+            if (userInfo[0].user_role != 3) {
+                return res.status(403).json({ error: 'Yetkisiz erişim!' });
+            }
+
+            const payments = await connection('payments').select('payments.*', 'users.username', 'users.email')
+                .join('users', 'payments.user_id', 'users.id')
+                .where('payments.status', status)
+                .orderBy('payments.created_at', 'desc');
+
+            payments.map((payment) => {
+                payment.paymentid = payment.id;
+                if (payment.status === '0') {
+                    payment.statusText = 'Beklemede';
+                } else if (payment.status === '1') {
+                    payment.statusText = 'Tamamlandı';
+                }
+                else if (payment.status === '2') {
+                    payment.statusText = 'İptal Edildi';
+                }
+            }
+            );
+
+            return res.status(200).json({ statusCode: 200, data: payments });
+
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Bir hata meydana geldi!' });
+        }
+    });
+
+
+    app.post('/api/updatePaymentStatus', authenticateToken, async (req, res) => {
+        try {
+            const { userid, paymentId, status } = req.body;
+
+            const userInfo = await connection('users')
+                .where('id', userid)
+                .orderBy('created_at', 'desc');
+
+            if (!userid || !paymentId || !status) {
+                return res.status(400).json({ error: 'Lütfen zorunlu alanları doldurun!' });
+            }
+
+            if (userInfo[0].user_role != 3) {
+                return res.status(403).json({ error: 'Yetkisiz erişim!' });
+            }
+
+            await connection('payments')
+                .where('id', paymentId)
+                .update({
+                    status: status
+                });
+            
+            if (status == 1) {
+                // ödeme tamamlandıysa kullanıcının bakiyesini güncelle
+                const paymentInfo = await connection('payments')
+                    .where('id', paymentId);
+                
+                const userBalance = await connection('users')
+                    .where('id', paymentInfo[0].user_id);
+
+                const newBalance = parseFloat(userBalance[0].balance) + parseFloat(paymentInfo[0].amount);
+
+                await connection('users')
+                    .where('id', paymentInfo[0].user_id)
+                    .update({
+                        balance: newBalance
+                    });
+                
+            }
+
+            return res.status(200).json({ statusCode : 200 ,message: 'Ödeme durumu güncellendi!' });
+
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Bir hata meydana geldi!' });
+        }
+    });
+
 
     app.get('/api/users/:user_name', (req, res) => {
-        
+
         var username = req.query.user_name;
         var userResponse = [];
 
         if (username === undefined) {
             return res.status(400).json({ error: 'Lütfen parametreleri kontrol edin', status: 'error' });
         }
-        
+
         connection.select('user_details.*').select('users.*').from('users').join('user_details', 'users.id', 'user_details.user_id').where('username', username).then((user) => {
             if (user.length === 0) {
                 return res.status(400).json({ error: 'Kullanıcı bulunamadı', status: 'error' });
@@ -131,14 +300,15 @@ async function methods (app) {
             else {
 
                 userResponse.push(
-                    {   user_id: user[0].id , 
-                        username: user[0].username, 
+                    {
+                        user_id: user[0].id,
+                        username: user[0].username,
                         email: user[0].email,
                         password: user[0].password,
                         gender: user[0].gender,
                         age: user[0].age,
                         bio: user[0].bio,
-                        profile_image: user[0].profile_image,    
+                        profile_image: user[0].profile_image,
                         user_role: user[0].user_role,
                         status: user[0].status,
                         balance: user[0].balance
@@ -156,100 +326,105 @@ async function methods (app) {
         var fortuner_type = req.body.fortuner_type;
         var isAdminReq = req.body.isAdmin;
         var userResponse = [];
- 
+
         // const blobData = result[0].blob_column;
 
         if ((user_role === undefined && fortuner_type !== undefined) || (user_role === undefined && fortuner_type === undefined)) {
             return res.status(400).json({ error: 'Lütfen parametreleri kontrol edin', status: 'error' });
 
         }
-    
+
         if (user_role === 0 && fortuner_type === 0 && isAdminReq === 1) {
             connection.select('users.*').select('user_details.id as user_details_id').select('user_details.fal_type').from('users').leftJoin('user_details', 'users.id', 'user_details.user_id')
-            .whereNotIn('user_role', [1,3])
-            .groupBy('users.id').then((users) => {
-                users.map((user) => {
-                    
-                    userResponse.push({ id: user.id , 
-                                        username: user.username, 
-                                        email: user.email,
-                                        password: user.password,
-                                        gender: user.gender,
-                                        age: user.age,
-                                        bio: user.bio,
-                                        profile_image: user.profile_image,
-                                        user_role: user.user_role,
-                                        status: user.status,
-                                        balance: user.balance,
-                                        created_at: user.created_at,
-                                        updated_at: user.updated_at,
-                                        user_details_id: user.user_details_id,
-                                        fal_type: user.fal_type
-                                    })
+                .whereNotIn('user_role', [1, 3])
+                .groupBy('users.id').then((users) => {
+                    users.map((user) => {
+
+                        userResponse.push({
+                            id: user.id,
+                            username: user.username,
+                            email: user.email,
+                            password: user.password,
+                            gender: user.gender,
+                            age: user.age,
+                            bio: user.bio,
+                            profile_image: user.profile_image,
+                            user_role: user.user_role,
+                            status: user.status,
+                            balance: user.balance,
+                            created_at: user.created_at,
+                            updated_at: user.updated_at,
+                            user_details_id: user.user_details_id,
+                            fal_type: user.fal_type
+                        })
+                    });
+
+                    return res.status(200).json(
+                        userResponse
+                    );
                 });
-                
-                return res.status(200).json(
-                    userResponse
-                );
-            });
         }
         else if (user_role === 0 && fortuner_type === 0 && isAdminReq === 0) {
 
 
             connection.select('users.*').select('user_details.id as user_details_id').select('user_details.fal_type').from('users').leftJoin('user_details', 'users.id', 'user_details.user_id')
-            .whereNotNull('user_details.id')
-            .groupBy('users.id').then((users) => {
-                users.map((user) => {
-                    userResponse.push({ id: user.id , 
-                                        username: user.username, 
-                                        email: user.email,
-                                        password: user.password,
-                                        gender: user.gender,
-                                        age: user.age,
-                                        bio: user.bio,
-                                        profile_image: user.profile_image,
-                                        user_role: user.user_role,
-                                        status: user.status,
-                                        balance: user.balance,
-                                        created_at: user.created_at,
-                                        updated_at: user.updated_at,
-                                        user_details_id: user.user_details_id,
-                                        fal_type: user.fal_type})
+                .whereNotNull('user_details.id')
+                .groupBy('users.id').then((users) => {
+                    users.map((user) => {
+                        userResponse.push({
+                            id: user.id,
+                            username: user.username,
+                            email: user.email,
+                            password: user.password,
+                            gender: user.gender,
+                            age: user.age,
+                            bio: user.bio,
+                            profile_image: user.profile_image,
+                            user_role: user.user_role,
+                            status: user.status,
+                            balance: user.balance,
+                            created_at: user.created_at,
+                            updated_at: user.updated_at,
+                            user_details_id: user.user_details_id,
+                            fal_type: user.fal_type
+                        })
+                    });
+
+                    return res.status(200).json(
+                        userResponse
+                    );
                 });
-              
-                return res.status(200).json(
-                    userResponse
-                );
-            });
         }
         else if (user_role > 0 && fortuner_type > 0 && isAdminReq === 0) {
 
             connection.select('users.*').select('user_details.id as user_details_id').select('user_details.fal_type').from('users').where('users.user_role', user_role).join('user_details', 'users.id', 'user_details.user_id').where('user_details.fal_type', fortuner_type).then((users) => {
                 users.map((user) => {
-                        userResponse.push({ id: user.id , 
-                                            username: user.username, 
-                                            email: user.email,
-                                            password: user.password,
-                                            gender: user.gender,
-                                            age: user.age,
-                                            bio: user.bio,
-                                            profile_image: user.profile_image,
-                                            user_role: user.user_role,
-                                            status: user.status,
-                                            balance: user.balance,
-                                            created_at: user.created_at,
-                                            updated_at: user.updated_at,
-                                            user_details_id: user.user_details_id,
-                                            fal_type: user.fal_type})
-                    });
-                    
-                    return res.status(200).json(
-                        userResponse
-                    );
+                    userResponse.push({
+                        id: user.id,
+                        username: user.username,
+                        email: user.email,
+                        password: user.password,
+                        gender: user.gender,
+                        age: user.age,
+                        bio: user.bio,
+                        profile_image: user.profile_image,
+                        user_role: user.user_role,
+                        status: user.status,
+                        balance: user.balance,
+                        created_at: user.created_at,
+                        updated_at: user.updated_at,
+                        user_details_id: user.user_details_id,
+                        fal_type: user.fal_type
+                    })
+                });
+
+                return res.status(200).json(
+                    userResponse
+                );
             });
         }
 
-       
+
     })
 
     app.post('/api/createfal', authenticateToken, async (req, res) => {
@@ -271,13 +446,13 @@ async function methods (app) {
             (req.body.comment !== undefined || req.body.comment !== null || req.body.comment !== '')) {
 
             fal_id = await insertFals(userid);
-            
+
             if (fal_id > 0) {
 
                 var image1 = Buffer.from(req.body.image1, 'base64');
                 var image2 = Buffer.from(req.body.image2, 'base64');
                 var image3 = Buffer.from(req.body.image3, 'base64');
-                
+
                 fs.mkdirSync('./images/' + req.body.userid, { recursive: true });
                 fs.mkdirSync('./images/' + req.body.userid + '/' + fal_id, { recursive: true });
 
@@ -305,7 +480,7 @@ async function methods (app) {
 
                     if (result) {
 
-                        
+
 
                         return res.status(200).json({ message: 'Fal kaydedildi!' });
                     }
@@ -379,38 +554,38 @@ async function methods (app) {
 
     app.post('/api/getAppointment', async (req, res) => {
         // userid userdetail tablosunun idsi
-        const { userid , faltype , pselectedDate } = req.body;
-       
+        const { userid, faltype, pselectedDate } = req.body;
+
         if (!userid) {
             return res.status(400).json({ error: 'Lütfen zorunlu alanları doldurun!' });
         }
         var hoursList = [];
         connection.raw("SELECT ap.id as app_id, ap.start_hour, ap.end_hour, ud.*, GetUserAppointments(?, ?) AS hoursList from user_details ud join appointments ap on ap.user_details_id = ud.id where ud.id = ?", [userid, dayjs(pselectedDate).format('DD.MM.YYYY'), userid])
-        .then((result) => {
-            hoursList = result[0][0].hoursList.split(',');
-            if (hoursList.length == 0) {
-                hoursList = null;
-            }
-            var userDetails = {
-                app_id: result[0][0].app_id,
-                user_id: result[0][0].user_id,
-                fal_type: result[0][0].fal_type,
-                start_hour: result[0][0].start_hour,
-                end_hour: result[0][0].end_hour,
-                
-            };
-            return res.status(200).json({hours : hoursList , app_details: userDetails });
-        })
-        .catch((err) => {
-            console.error('Error fetching taken appointments:', err);
-        });
+            .then((result) => {
+                hoursList = result[0][0].hoursList.split(',');
+                if (hoursList.length == 0) {
+                    hoursList = null;
+                }
+                var userDetails = {
+                    app_id: result[0][0].app_id,
+                    user_id: result[0][0].user_id,
+                    fal_type: result[0][0].fal_type,
+                    start_hour: result[0][0].start_hour,
+                    end_hour: result[0][0].end_hour,
+
+                };
+                return res.status(200).json({ hours: hoursList, app_details: userDetails });
+            })
+            .catch((err) => {
+                console.error('Error fetching taken appointments:', err);
+            });
 
     })
 
-    app.post('/api/getZodiacs',authenticateToken, (req, res) => {
+    app.post('/api/getZodiacs', authenticateToken, (req, res) => {
         connection.select().from('zodiac_signs').then((zodiacs) => {
             if (zodiacs.length > 0) {
-                return res.status(200).json({data : zodiacs, statusCode : 200});
+                return res.status(200).json({ data: zodiacs, statusCode: 200 });
             }
             else {
                 return res.status(400).json({ error: 'Bir hata meydana geldi!' });
@@ -419,10 +594,10 @@ async function methods (app) {
     }
     )
 
-    app.post('/api/addNewSignComment',authenticateToken, (req, res) => {
+    app.post('/api/addNewSignComment', authenticateToken, (req, res) => {
         connection.select().from('zodiac_signs_comments').where('zodiac_sign_id', req.body.signId).andWhere('created_at', req.body.date).then((comments) => {
             if (comments.length > 0) {
-                return res.status(200).json({ message: 'Bu tarih için yorum zaten var!' , statusCode : 404 });
+                return res.status(200).json({ message: 'Bu tarih için yorum zaten var!', statusCode: 404 });
             }
             else {
                 connection('zodiac_signs_comments').insert({
@@ -434,14 +609,14 @@ async function methods (app) {
                     created_at: req.body.date
                 }).then((result) => {
                     if (result) {
-                        return res.status(200).json({ message: 'Yorum eklendi!' , statusCode : 200 });
+                        return res.status(200).json({ message: 'Yorum eklendi!', statusCode: 200 });
                     }
                     else {
-                        return res.status(400).json({ message: 'Bir hata meydana geldi!' , statusCode : 404 });
+                        return res.status(400).json({ message: 'Bir hata meydana geldi!', statusCode: 404 });
                     }
                 }).catch((err) => {
                     console.log(err);
-                    return res.status(400).json({ message: 'Bir hata meydana geldi!'  , statusCode : 404 });
+                    return res.status(400).json({ message: 'Bir hata meydana geldi!', statusCode: 404 });
                 })
             }
         }
@@ -452,30 +627,30 @@ async function methods (app) {
     }
     )
 
-    app.post('/api/getSignComments',authenticateToken, (req, res) => {
+    app.post('/api/getSignComments', authenticateToken, (req, res) => {
         connection.select('zodiac_signs_comments.*', 'zodiac_signs.name').from('zodiac_signs_comments')
             .join('zodiac_signs', 'zodiac_signs.id', 'zodiac_signs_comments.zodiac_sign_id')
             .where('zodiac_sign_id', req.body.signId).then((comments) => {
-            if (comments.length > 0) {
-                return res.status(200).json({data : comments, statusCode : 200});
-            }
-            else if (comments.length == 0) {
-                return res.status(200).json({data : comments, statusCode : 404});
-            }
-            else {
-                return res.status(400).json({ error: 'Bir hata meydana geldi!' });
-            }
-        })
+                if (comments.length > 0) {
+                    return res.status(200).json({ data: comments, statusCode: 200 });
+                }
+                else if (comments.length == 0) {
+                    return res.status(200).json({ data: comments, statusCode: 404 });
+                }
+                else {
+                    return res.status(400).json({ error: 'Bir hata meydana geldi!' });
+                }
+            })
     }
     )
 
-    app.post('/api/deleteSignComment',authenticateToken, (req, res) => {
+    app.post('/api/deleteSignComment', authenticateToken, (req, res) => {
         connection('zodiac_signs_comments').where('id', req.body.commentId).del().then((result) => {
             if (result) {
-                return res.status(200).json({ statusCode : 200,message: 'Yorum silindi!' });
+                return res.status(200).json({ statusCode: 200, message: 'Yorum silindi!' });
             }
             else {
-                return res.status(400).json({statusCode : 400, message: 'Bir hata meydana geldi!' });
+                return res.status(400).json({ statusCode: 400, message: 'Bir hata meydana geldi!' });
             }
         }).catch((err) => {
             console.log(err);
@@ -483,24 +658,24 @@ async function methods (app) {
         })
     }
     )
-    
+
     // UPDATE SIGN COMMENT
     app.post('/api/updateSignComment', authenticateToken, (req, res) => {
-        
+
         connection('zodiac_signs_comments')
-        .where('id', req.body.commentId)
-        .update({
-        comment: req.body.dailyComment,
-        commentlove: req.body.loveComment,
-        commentwork: req.body.careerComment,
-        commenthealth: req.body.healthComment
-    }
-        ).then((result) => {
-            return res.status(200).json({ statusCode: 200, message: 'Yorum güncellendi!' });
-        }).catch((err) => {
-            console.log(err);
-            return res.status(400).json({ statusCode: 400, message: 'Bir hata meydana geldi!' });
-        });
+            .where('id', req.body.commentId)
+            .update({
+                comment: req.body.dailyComment,
+                commentlove: req.body.loveComment,
+                commentwork: req.body.careerComment,
+                commenthealth: req.body.healthComment
+            }
+            ).then((result) => {
+                return res.status(200).json({ statusCode: 200, message: 'Yorum güncellendi!' });
+            }).catch((err) => {
+                console.log(err);
+                return res.status(400).json({ statusCode: 400, message: 'Bir hata meydana geldi!' });
+            });
     });
 
 
@@ -508,22 +683,22 @@ async function methods (app) {
         connection.select().from('zodiac_signs')
             .join('zodiac_signs_comments', 'zodiac_signs.id', 'zodiac_signs_comments.zodiac_sign_id')
             .where('zodiac_signs.id', req.body.id).andWhere('zodiac_signs_comments.created_at', req.body.date).then((sign) => {
-            if (sign.length > 0) {
-                return res.status(200).json({data : sign, statusCode : 200});
-            }
-            else if (sign.length == 0) {
-                return res.status(200).json({data : sign, statusCode : 404});
-            }
-            else {
-                return res.status(400).json({ error: 'Bir hata meydana geldi!' });
-            }
-        })
+                if (sign.length > 0) {
+                    return res.status(200).json({ data: sign, statusCode: 200 });
+                }
+                else if (sign.length == 0) {
+                    return res.status(200).json({ data: sign, statusCode: 404 });
+                }
+                else {
+                    return res.status(400).json({ error: 'Bir hata meydana geldi!' });
+                }
+            })
     }
     )
 
 
 
-    FalEndPoints(app , connection);
+    FalEndPoints(app, connection);
 }
 
 
