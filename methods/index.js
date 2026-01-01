@@ -596,10 +596,16 @@ async function methods(app) {
         if (!userid) {
             return res.status(400).json({ error: 'Lütfen zorunlu alanları doldurun!' });
         }
+
         var hoursList = [];
         connection.raw("SELECT ap.id as app_id, ap.start_hour, ap.end_hour, ud.*, GetUserAppointments(?, ?) AS hoursList from user_details ud join appointments ap on ap.user_details_id = ud.id where ud.id = ?", [userid, dayjs(pselectedDate).format('DD.MM.YYYY'), userid])
             .then((result) => {
-                hoursList = result[0][0].hoursList.split(',');
+                if (result[0][0] == undefined) {
+                    return res.status(200).json({ hours: [], app_details: [] });
+                }
+                else {
+                    hoursList = result[0][0].hoursList.split(',');
+                }
                 if (hoursList.length == 0) {
                     hoursList = null;
                 }
@@ -615,8 +621,8 @@ async function methods(app) {
             })
             .catch((err) => {
                 console.error('Error fetching taken appointments:', err);
+                return res.status(200).json({ hours: [], app_details: [] });
             });
-
     })
 
     app.post('/api/getZodiacs', authenticateToken, (req, res) => {
